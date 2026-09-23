@@ -22,11 +22,21 @@ function emptyData() {
   return {
     meta: { name: '运单计费与账单核对台', currency: 'CNY', updatedAt: null },
     settings: clone(DEFAULT_SETTINGS),
+    pricing: { mode: 'first_add', history: [] },
     zones: [],
     customers: [],
     waybills: [],
     bills: [],
   };
+}
+
+function normalizePricing(raw) {
+  const p = raw && typeof raw === 'object' ? raw : {};
+  const mode = p.mode === 'tiered' || p.mode === 'first_add' ? p.mode : 'first_add';
+  const history = Array.isArray(p.history)
+    ? p.history.filter((item) => item && (item.fromMode || item.toMode)).map((item) => item)
+    : [];
+  return { mode, history };
 }
 
 function normalize(raw) {
@@ -35,6 +45,7 @@ function normalize(raw) {
   const out = {
     meta: Object.assign({}, base.meta, data.meta || {}),
     settings: Object.assign({}, base.settings, data.settings || {}),
+    pricing: normalizePricing(data.pricing),
     zones: Array.isArray(data.zones) ? data.zones.filter((item) => item && item.id) : [],
     customers: Array.isArray(data.customers) ? data.customers.filter((item) => item && item.id) : [],
     waybills: Array.isArray(data.waybills) ? data.waybills.filter((item) => item && item.id) : [],
@@ -43,6 +54,7 @@ function normalize(raw) {
   out.zones.forEach((zone) => {
     if (!Array.isArray(zone.cities)) zone.cities = [];
     if (!zone.aliases || typeof zone.aliases !== 'object') zone.aliases = {};
+    if (!Array.isArray(zone.weightTiers)) zone.weightTiers = [];
   });
   out.waybills.forEach((waybill) => {
     if (!Array.isArray(waybill.services)) waybill.services = [];

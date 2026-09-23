@@ -1,6 +1,7 @@
 const { badRequest, notFound } = require('./errors');
 const { load, save, nextId } = require('./store');
 const pricing = require('./pricing');
+const pricingMode = require('./pricingMode');
 const { findCustomer } = require('./customers');
 
 function cleanCity(value) {
@@ -25,37 +26,81 @@ function candidateWaybills(data, period, customerId) {
   return data.waybills.filter((waybill) => waybill.customerId === customerId && periodOf(waybill) === period);
 }
 
-// 出账计费：同一账期同一客户的运单合起来算一次首重续重，再按各自的计费重量分摊
-function priceBill(data, customer, waybills) {
+// 出账计费：
+// - 首重续重：同一账期同一客户的运单合起来算一次首重续重，再按各自的计费重量分摊
+// - 阶梯价：每条运单按自己的计费重量落段独立计运费，附加费照旧逐单算，最后合计
+function priceBill(data, customer, waybills, mode) {
   const settings = pricing.settingsOf(data);
   const permille = pricing.discountPermilleOf(customer);
-  if (waybills.length === 0) return { lines: [], amountYuan: 0, permille };
+  if (waybills.length === 0) return { lines: [], amountYuan: 0, permille, mode };
   const zone = zoneOf(data, waybills[0].toCity);
   const weights = waybills.map((waybill) => pricing.billableWeightKg(waybill, settings));
-  const totalWeight = weights.reduce((sum, value) => sum + value, 0);
-  const freightAll = pricing.freightYuan(zone, totalWeight, settings);
-  const surchargeAll = waybills.reduce((sum, waybill, index) => (
-    sum + pricing.surchargeYuan(zone, waybill, weights[index], settings)
-  ), 0);
-  const grossAll = freightAll + surchargeAll;
-  const amountYuan = grossAll * permille / 1000;
-  const lines = waybills.map((waybill, index) => {
-    const weight = weights[index];
-    const share = totalWeight > 0 ? weight / totalWeight : 0;
-    const raw = (freightAll * share + pricing.surchargeYuan(zone, waybill, weight, settings)) * permille / 1000;
-    const cached = Number(waybill.quoteCacheYuan);
-    const amount = cached > 0 ? cached : pricing.roundFen(raw);
-    return {
-      waybillId: waybill.id,
-      code: waybill.code,
-      toCity: waybill.toCity,
-      zoneName: zone ? zone.name : '',
-      billableKg: weight,
-      amountYuan: amount,
-      fromCache: cached > 0,
-    };
-  });
-  return { lines, amountYuan, permille };
+
+  let lines;
+  let amountYuan;
+
+  if (mode === 'tiered') {
+    waybills.forEach((waybill, index) => {
+      const weight = weights[index];
+      if (!pricing.tierOfWeight(zone, weight)) {
+        throw badRequest(
+          'BILL_TIER_UNCOVERED',
+          '运单 ' + waybill.code + ' 的计费重量 ' + weight + 'kg 落在分区「' + (zone ? zone.name : '未归属') + '」已登记区间之外，先到定价页补齐区间再出账',
+          { waybillId: waybill.id, billableKg: weight }
+        );
+      }
+    });
+    lines = waybills.map((waybill, index) => {
+      const weight = weights[index];
+      const tier = pricing.tierOfWeight(zone, weight);
+      const freight = pricing.tieredFreightYuan(zone, weight);
+      const surcharge = pricing.surchargeYuan(zone, waybill, weight, settings);
+      const cached = Number(waybill.quoteCacheYuan);
+      const raw = (freight + surcharge) * permille / 1000;
+      // 缓存的单条计费只有在同一算法下才采信，避免拿旧算法的金额进新算法的账单
+      const sameMode = waybill.quoteMode === 'tiered';
+      const amount = sameMode && cached > 0 ? cached : pricing.roundFen(raw);
+      return {
+        waybillId: waybill.id,
+        code: waybill.code,
+        toCity: waybill.toCity,
+        zoneName: zone ? zone.name : '',
+        billableKg: weight,
+        tierFromKg: Number(tier.fromKg),
+        tierToKg: Number(tier.toKg),
+        amountYuan: amount,
+        fromCache: sameMode && cached > 0,
+      };
+    });
+    amountYuan = lines.reduce((sum, line) => sum + line.amountYuan, 0);
+  } else {
+    const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+    const freightAll = pricing.freightYuan(zone, totalWeight, settings);
+    const surchargeAll = waybills.reduce((sum, waybill, index) => (
+      sum + pricing.surchargeYuan(zone, waybill, weights[index], settings)
+    ), 0);
+    const grossAll = freightAll + surchargeAll;
+    amountYuan = grossAll * permille / 1000;
+    lines = waybills.map((waybill, index) => {
+      const weight = weights[index];
+      const share = totalWeight > 0 ? weight / totalWeight : 0;
+      const raw = (freightAll * share + pricing.surchargeYuan(zone, waybill, weight, settings)) * permille / 1000;
+      const cached = Number(waybill.quoteCacheYuan);
+      const sameMode = !waybill.quoteMode || waybill.quoteMode === 'first_add';
+      const amount = sameMode && cached > 0 ? cached : pricing.roundFen(raw);
+      return {
+        waybillId: waybill.id,
+        code: waybill.code,
+        toCity: waybill.toCity,
+        zoneName: zone ? zone.name : '',
+        billableKg: weight,
+        amountYuan: amount,
+        fromCache: sameMode && cached > 0,
+      };
+    });
+  }
+
+  return { lines, amountYuan, permille, mode };
 }
 
 function summarizeBill(bill, data) {
@@ -68,6 +113,8 @@ function summarizeBill(bill, data) {
   return Object.assign({}, bill, {
     customerName: customer ? customer.name : '（客户已删）',
     customerCode: customer ? customer.code : '',
+    pricingMode: bill.pricingMode || 'first_add',
+    pricingModeText: bill.pricingMode === 'tiered' ? '阶梯价' : '首重续重',
     lineSumYuan: pricing.roundFen(lineSum),
     amountText: Number(bill.amountYuan || 0).toFixed(2),
     lineSumText: pricing.roundFen(lineSum).toFixed(2),
@@ -75,6 +122,9 @@ function summarizeBill(bill, data) {
     lines: lines.map((line) => Object.assign({}, line, {
       amountText: Number(line.amountYuan || 0).toFixed(2),
       billableText: Number(line.billableKg).toFixed(2) + ' kg',
+      tierText: line.tierFromKg != null
+        ? '[' + Number(line.tierFromKg) + ', ' + Number(line.tierToKg) + ')'
+        : '',
     })),
     waybills: waybills.map((waybill) => ({
       id: waybill.id,
@@ -123,7 +173,8 @@ function generateBill(payload) {
   if (!customer) throw badRequest('BILL_CUSTOMER_REQUIRED', '要选一个客户', { field: 'customerId' });
   const targets = candidateWaybills(data, period, customerId);
   if (targets.length === 0) throw badRequest('BILL_NO_WAYBILL', '这个账期里这个客户没有可以出账的运单', { field: 'period' });
-  const priced = priceBill(data, customer, targets);
+  const mode = pricingMode.currentMode(data);
+  const priced = priceBill(data, customer, targets, mode);
   const samePeriod = data.bills.filter((bill) => bill.period === period && bill.customerId === customerId).length;
   const bill = {
     id: nextId('bill', data.bills),
@@ -132,6 +183,7 @@ function generateBill(payload) {
     customerId,
     status: '已出账',
     createdAt: new Date().toISOString(),
+    pricingMode: mode,
     waybillIds: targets.map((waybill) => waybill.id),
     lines: priced.lines,
     amountYuan: priced.amountYuan,

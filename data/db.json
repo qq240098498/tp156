@@ -2,7 +2,7 @@
   "meta": {
     "name": "运单计费与账单核对台",
     "currency": "CNY",
-    "updatedAt": "2026-09-22T12:48:30.802Z"
+    "updatedAt": "2026-09-23T08:35:30.193Z"
   },
   "settings": {
     "volumetricDivisor": 6000,
@@ -11,6 +11,86 @@
     "oversizePieces": 3,
     "oversizeFeeYuan": 20,
     "insurancePermille": 20
+  },
+  "pricing": {
+    "mode": "tiered",
+    "history": [
+      {
+        "at": "2026-09-23T08:35:19.942Z",
+        "fromMode": "first_add",
+        "toMode": "tiered",
+        "affectedCount": 5,
+        "affectedIds": [
+          "wb-0018",
+          "wb-0021",
+          "wb-0019",
+          "wb-0020",
+          "wb-0022"
+        ],
+        "affectedCodes": [
+          "YD20260902018",
+          "YD20260903021",
+          "YD20260905019",
+          "YD20260908020",
+          "YD20260910022"
+        ],
+        "totals": {
+          "firstAddYuan": 363.8,
+          "tieredYuan": 277,
+          "diffYuan": -86.8
+        }
+      },
+      {
+        "at": "2026-09-23T08:35:28.212Z",
+        "fromMode": "tiered",
+        "toMode": "first_add",
+        "affectedCount": 5,
+        "affectedIds": [
+          "wb-0018",
+          "wb-0021",
+          "wb-0019",
+          "wb-0020",
+          "wb-0022"
+        ],
+        "affectedCodes": [
+          "YD20260902018",
+          "YD20260903021",
+          "YD20260905019",
+          "YD20260908020",
+          "YD20260910022"
+        ],
+        "totals": {
+          "firstAddYuan": 363.8,
+          "tieredYuan": 277,
+          "diffYuan": -86.8
+        }
+      },
+      {
+        "at": "2026-09-23T08:35:30.193Z",
+        "fromMode": "first_add",
+        "toMode": "tiered",
+        "affectedCount": 5,
+        "affectedIds": [
+          "wb-0018",
+          "wb-0021",
+          "wb-0019",
+          "wb-0020",
+          "wb-0022"
+        ],
+        "affectedCodes": [
+          "YD20260902018",
+          "YD20260903021",
+          "YD20260905019",
+          "YD20260908020",
+          "YD20260910022"
+        ],
+        "totals": {
+          "firstAddYuan": 363.8,
+          "tieredYuan": 277,
+          "diffYuan": -86.8
+        }
+      }
+    ]
   },
   "zones": [
     {
@@ -30,7 +110,33 @@
       "addUnitKg": 0.5,
       "addPriceYuan": 1.5,
       "remoteFeeYuan": 0,
-      "status": "启用"
+      "status": "启用",
+      "weightTiers": [
+        {
+          "fromKg": 0,
+          "toKg": 1,
+          "kind": "flat",
+          "priceYuan": 8
+        },
+        {
+          "fromKg": 1,
+          "toKg": 3,
+          "kind": "unit",
+          "priceYuan": 3
+        },
+        {
+          "fromKg": 3,
+          "toKg": 10,
+          "kind": "flat",
+          "priceYuan": 15
+        },
+        {
+          "fromKg": 10,
+          "toKg": 99999,
+          "kind": "flat",
+          "priceYuan": 35
+        }
+      ]
     },
     {
       "id": "zone-0002",
@@ -49,7 +155,33 @@
       "addUnitKg": 0.5,
       "addPriceYuan": 2,
       "remoteFeeYuan": 0,
-      "status": "启用"
+      "status": "启用",
+      "weightTiers": [
+        {
+          "fromKg": 0,
+          "toKg": 1,
+          "kind": "flat",
+          "priceYuan": 10
+        },
+        {
+          "fromKg": 1,
+          "toKg": 3,
+          "kind": "unit",
+          "priceYuan": 4
+        },
+        {
+          "fromKg": 3,
+          "toKg": 10,
+          "kind": "flat",
+          "priceYuan": 22
+        },
+        {
+          "fromKg": 10,
+          "toKg": 99999,
+          "kind": "flat",
+          "priceYuan": 50
+        }
+      ]
     },
     {
       "id": "zone-0003",
@@ -66,7 +198,33 @@
       "addUnitKg": 0.5,
       "addPriceYuan": 3,
       "remoteFeeYuan": 2,
-      "status": "启用"
+      "status": "启用",
+      "weightTiers": [
+        {
+          "fromKg": 0,
+          "toKg": 1,
+          "kind": "flat",
+          "priceYuan": 12
+        },
+        {
+          "fromKg": 1,
+          "toKg": 3,
+          "kind": "unit",
+          "priceYuan": 5
+        },
+        {
+          "fromKg": 3,
+          "toKg": 10,
+          "kind": "flat",
+          "priceYuan": 30
+        },
+        {
+          "fromKg": 10,
+          "toKg": 99999,
+          "kind": "flat",
+          "priceYuan": 70
+        }
+      ]
     },
     {
       "id": "zone-0004",
@@ -82,7 +240,33 @@
       "addUnitKg": 0.5,
       "addPriceYuan": 4,
       "remoteFeeYuan": 5,
-      "status": "启用"
+      "status": "启用",
+      "weightTiers": [
+        {
+          "fromKg": 0,
+          "toKg": 1,
+          "kind": "flat",
+          "priceYuan": 15
+        },
+        {
+          "fromKg": 1,
+          "toKg": 3,
+          "kind": "unit",
+          "priceYuan": 7
+        },
+        {
+          "fromKg": 3,
+          "toKg": 10,
+          "kind": "flat",
+          "priceYuan": 40
+        },
+        {
+          "fromKg": 10,
+          "toKg": 99999,
+          "kind": "flat",
+          "priceYuan": 90
+        }
+      ]
     }
   ],
   "customers": [

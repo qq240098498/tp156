@@ -1,8 +1,56 @@
 const { badRequest, notFound } = require('./errors');
 const { load, save, nextId } = require('./store');
+const { TIER_KINDS, TIER_OPEN_AT_KG } = require('./pricing');
 
 function cleanCity(value) {
   return String(value == null ? '' : value).trim();
+}
+
+// 阶梯区间口径：每段 [fromKg, toKg)，下界含、上界不含；末段上界填 TIER_OPEN_AT_KG 视为「以上」不限重
+// 校验：至少一段；第一段下界必须是 0；各段按下界排序后首尾相接（前段上界 = 后段下界），不重叠也不留缺口
+function validateWeightTiers(raw) {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw badRequest('ZONE_TIERS_INVALID', '重量区间要按列表登记', { field: 'weightTiers' });
+  const tiers = raw.map((item, index) => {
+    const row = item && typeof item === 'object' ? item : {};
+    const fromKg = Number(row.fromKg);
+    const toKg = Number(row.toKg);
+    const kind = String(row.kind || '').trim();
+    const priceYuan = Number(row.priceYuan);
+    const label = '第 ' + (index + 1) + ' 段';
+    if (!(Number.isFinite(fromKg) && fromKg >= 0)) {
+      throw badRequest('ZONE_TIER_FROM_INVALID', label + ' 的下界要填不小于 0 的数字', { field: 'weightTiers', index });
+    }
+    if (!(Number.isFinite(toKg) && toKg > fromKg)) {
+      throw badRequest('ZONE_TIER_TO_INVALID', label + ' 的上界要大于下界', { field: 'weightTiers', index });
+    }
+    if (toKg > TIER_OPEN_AT_KG) {
+      throw badRequest('ZONE_TIER_TO_INVALID', label + ' 的上界最大填 ' + TIER_OPEN_AT_KG + '（填 ' + TIER_OPEN_AT_KG + ' 表示以上不限重）', { field: 'weightTiers', index });
+    }
+    if (!TIER_KINDS.includes(kind)) {
+      throw badRequest('ZONE_TIER_KIND_INVALID', label + ' 的算法要选「整段价」或「单价」', { field: 'weightTiers', index });
+    }
+    if (!(Number.isFinite(priceYuan) && priceYuan >= 0)) {
+      throw badRequest('ZONE_TIER_PRICE_INVALID', label + ' 的价格要填不小于 0 的数字', { field: 'weightTiers', index });
+    }
+    return { fromKg, toKg, kind, priceYuan };
+  });
+  if (tiers.length === 0) return [];
+  const sorted = tiers.slice().sort((a, b) => a.fromKg - b.fromKg);
+  if (sorted[0].fromKg !== 0) {
+    throw badRequest('ZONE_TIERS_NOT_FROM_ZERO', '第一个重量区间必须从 0kg 开始，不能在最轻的重量段留缺口', { field: 'weightTiers' });
+  }
+  for (let i = 1; i < sorted.length; i += 1) {
+    if (sorted[i].fromKg !== sorted[i - 1].toKg) {
+      throw badRequest(
+        'ZONE_TIERS_GAP',
+        '重量区间之间不能重叠也不能留缺口：' + sorted[i - 1].fromKg + '–' + sorted[i - 1].toKg +
+          'kg 段的上界要正好等于下一段下界 ' + sorted[i].fromKg + 'kg',
+        { field: 'weightTiers', index: i }
+      );
+    }
+  }
+  return sorted;
 }
 
 function listZones() {
@@ -19,6 +67,12 @@ function listZones() {
       addUnitKg: Number(zone.addUnitKg),
       addPriceYuan: Number(zone.addPriceYuan),
       remoteFeeYuan: Number(zone.remoteFeeYuan || 0),
+      weightTiers: (Array.isArray(zone.weightTiers) ? zone.weightTiers : []).map((tier) => ({
+        fromKg: Number(tier.fromKg),
+        toKg: Number(tier.toKg),
+        kind: tier.kind,
+        priceYuan: Number(tier.priceYuan),
+      })),
       status: zone.status,
       citiesText: zone.cities.join('、'),
       aliasesText: Object.keys(zone.aliases || {}).join('、'),
@@ -80,7 +134,11 @@ function validateZonePayload(payload, current) {
     if (!target) throw badRequest('ZONE_ALIAS_TARGET_REQUIRED', '别名要写明对应哪个城市：' + alias, { field: 'aliases' });
     aliases[alias] = target;
   });
-  return { code, name, status, firstWeightKg, firstPriceYuan, addUnitKg, addPriceYuan, remoteFeeYuan, cities, aliases };
+  // 区间列表允许不传（沿用原值）或传空数组（还没配阶梯价）；非空时必须通过区间校验
+  const weightTiers = Object.prototype.hasOwnProperty.call(next, 'weightTiers')
+    ? validateWeightTiers(next.weightTiers)
+    : (Array.isArray(current && current.weightTiers) ? current.weightTiers : []);
+  return { code, name, status, firstWeightKg, firstPriceYuan, addUnitKg, addPriceYuan, remoteFeeYuan, cities, aliases, weightTiers };
 }
 
 function createZone(payload) {

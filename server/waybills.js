@@ -1,6 +1,7 @@
 const { badRequest, notFound } = require('./errors');
 const { load, save, nextId } = require('./store');
 const pricing = require('./pricing');
+const pricingMode = require('./pricingMode');
 const zones = require('./zones');
 const { findCustomer } = require('./customers');
 
@@ -22,6 +23,8 @@ function decorate(waybill, data) {
     billCode: bill ? bill.code : '',
     billStatus: bill ? bill.status : '',
     locked: Boolean(waybill.billId),
+    quoteMode: waybill.quoteMode || '',
+    quoteModeText: waybill.quoteMode === 'tiered' ? '阶梯价' : (waybill.quoteMode === 'first_add' ? '首重续重' : ''),
     weightText: Number(waybill.weightKg).toFixed(2) + ' kg',
     volumeText: Number(waybill.volumeM3).toFixed(3) + ' m³',
     createdAtText: String(waybill.createdAt || '').replace('T', ' ').slice(0, 16),
@@ -129,7 +132,7 @@ function removeWaybill(id) {
   return { removed: id };
 }
 
-// 单条计费：算完之后把结果记在运单上，页面上再次打开可以直接看到上次算出来的数
+// 单条计费：按当前落定的算法算，结果记在运单上，页面上再次打开可以直接看到上次算出来的数
 function quote(id) {
   const data = load();
   const waybill = findWaybill(data, id);
@@ -137,10 +140,15 @@ function quote(id) {
   const settings = pricing.settingsOf(data);
   const zone = zones.zoneOfCity(data, waybill.toCity);
   if (!zone) throw badRequest('WAYBILL_ZONE_UNKNOWN', '收件城市 ' + waybill.toCity + ' 还没有归属到任何分区');
+  const mode = pricingMode.currentMode(data);
   const customer = findCustomer(data, waybill.customerId);
-  const result = pricing.quoteWaybill(waybill, zone, customer, settings);
+  const result = pricing.quoteWaybill(waybill, zone, customer, settings, mode);
+  if (result.missingTier) {
+    throw badRequest('WAYBILL_TIER_UNCOVERED', '分区「' + zone.name + '」的重量区间没有覆盖到计费重量 ' + result.billableKg + 'kg，先到定价页补齐区间');
+  }
   waybill.quoteCacheYuan = result.totalYuan;
   waybill.quoteCachedAt = new Date().toISOString();
+  waybill.quoteMode = mode;
   save(data);
   return Object.assign({ waybill: decorate(waybill, load()) }, result);
 }

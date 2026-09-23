@@ -593,3 +593,40 @@ tbody tr:hover td { background: var(--slate-soft); }
   .tabs { height: 42px; }
   .topbar-side { width: 100%; }
 }
+
+/* ---------------- 定价页（阶梯价） ---------------- */
+.rule-note {
+  border: 1px solid var(--brand-line);
+  background: var(--brand-soft);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+.rule-note p { margin: 4px 0; font-size: 12px; color: var(--ink-2); }
+.rule-note b { color: var(--brand-deep); }
+
+.tier-table { font-size: 12px; }
+.tier-table th, .tier-table td { padding: 5px 6px; }
+.tier-table .bound-cell { white-space: nowrap; }
+.tier-table .bound-mark { color: var(--brand); font-weight: 700; }
+.tier-table select, .tier-table .tier-input {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  font-size: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+}
+.tier-table .tier-to { max-width: 74px; }
+.tier-table .nowrap { white-space: nowrap; }
+.btn-sm { padding: 3px 8px; font-size: 12px; }
+
+.tier-zone-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
+
+/* 双算法对比表 */
+.cmp-table th, .cmp-table td { padding: 6px 8px; }
+.cmp-cell { display: inline-flex; align-items: center; gap: 6px; }
+.num.pos, .pos { color: var(--danger); font-weight: 700; }
+.num.neg, .neg { color: #2c7a4b; font-weight: 700; }
+.row-muted { background: var(--slate-soft); color: var(--faint); }
+.row-muted td { color: var(--faint); }

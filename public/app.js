@@ -5,7 +5,9 @@
   /* ================= 常量 ================= */
   var STATUSES = ['待发', '在途', '已签收', '退回'];
   var SERVICE_OPTIONS = ['保价', '签收', '上门'];
-  var TAB_LABELS = { overview: '概览', waybills: '运单', zones: '分区', customers: '客户', bills: '账单' };
+  var TAB_LABELS = { overview: '概览', waybills: '运单', zones: '分区', pricing: '定价', customers: '客户', bills: '账单' };
+  var MODE_LABELS = { first_add: '首重续重', tiered: '阶梯价' };
+  var TIER_OPEN_AT_KG = 99999;
   var FIELD_LABELS = {
     code: '编码/运单号', name: '名称', status: '状态', customerId: '客户',
     fromCity: '寄件城市', toCity: '收件城市', weightKg: '实际重量', volumeM3: '体积',
@@ -26,6 +28,10 @@
     periods: [],
     filters: { keyword: '', customerId: '', status: '', unzoned: false },
     zoneFilter: { keyword: '', status: '' },
+    pricingData: { status: null, compare: null, loading: false },
+    pricingFilter: { customerId: '' },
+    editingTiersZoneId: '',
+    tierDraft: [],
     customerFilter: { keyword: '', settle: '', status: '' },
     selectedWaybillId: '',
     waybillMode: 'view',      // view | create | edit
@@ -127,6 +133,18 @@
   function loadCustomers() { return api('GET', '/api/customers').then(function (r) { state.customers = (r && r.customers) || []; }); }
   function loadPeriods() { return api('GET', '/api/periods').then(function (r) { state.periods = (r && r.periods) || []; }); }
   function loadBills() { return api('GET', '/api/bills').then(function (r) { state.bills = r || { bills: [], total: 0, issued: 0, voided: 0 }; }); }
+
+  function compareQuery() {
+    return state.pricingFilter.customerId ? ('?customerId=' + encodeURIComponent(state.pricingFilter.customerId)) : '';
+  }
+  function loadPricingCompare() {
+    var box = state.pricingData;
+    box.loading = true;
+    return api('GET', '/api/pricing/compare' + compareQuery()).then(function (r) {
+      box.compare = r;
+      box.loading = false;
+    }).catch(function (err) { box.loading = false; throw err; });
+  }
 
   function waybillQuery() {
     var qs = [];
@@ -236,6 +254,10 @@
       case 'zones':
         text = '分区清单 ' + num(state.zones.length) + ' 个';
         break;
+      case 'pricing':
+        text = '定价：当前算法「' + modeText(pricingStatus() && pricingStatus().mode) + '」，未出账运单 ' +
+          num((state.pricingData.compare || {}).counts && state.pricingData.compare.counts.priced) + ' 条可试算';
+        break;
       case 'customers':
         text = '客户清单 ' + num(state.customers.length) + ' 个';
         break;
@@ -334,8 +356,13 @@
       : '<p class="block-hint">还没有可用的账期（账期按运单创建月份归集）。</p>';
 
     var st = s.settings || {};
+    var pst = s.pricing || null;
+    var modeLine = pst
+      ? '<dt>当前计费算法</dt><dd class="is-amber">' + esc(modeText(pst.mode)) + '（' + (pst.tieredReady ? '各分区阶梯区间已配齐' : '尚有分区未配齐阶梯区间') + '）</dd>'
+      : '';
     var settingsHtml =
       '<dl class="kv-list">' +
+      modeLine +
       '<dt>体积系数</dt><dd>' + esc(num(st.volumetricDivisor)) + '</dd>' +
       '<dt>最低收费</dt><dd>' + esc(money(st.minChargeYuan)) + ' 元</dd>' +
       '<dt>超规线</dt><dd>' + esc(num(st.oversizeWeightKg)) + ' kg 或 ' + esc(num(st.oversizePieces)) + ' 件</dd>' +
@@ -505,7 +532,8 @@
     var quoteHtml = '';
     if (quote) {
       quoteHtml = '<div class="panel is-amber">' +
-        '<h4 class="panel-title">本次计费结果（' + esc(quote.zoneName || '—') + '）</h4>' +
+        '<h4 class="panel-title">本次计费结果（' + esc(quote.zoneName || '—') + ' · ' + esc(modeText(quote.mode)) + '）</h4>' +
+        (quote.tier ? '<div class="amount-row"><span>落段口径</span><b>' + esc(tierRangeText(quote.tier) + '，' + tierKindText(quote.tier.kind) + ' ' + money(quote.tier.priceYuan) + (quote.tier.kind === 'unit' ? ' 元/kg' : ' 元')) + '</b></div>' : '') +
         '<div class="amount-row"><span>计费重量</span><b>' + esc(kg(quote.billableKg)) + '</b></div>' +
         '<div class="amount-row"><span>运费</span><b>' + esc(money(quote.freightYuan)) + ' 元</b></div>' +
         '<div class="amount-row"><span>附加费</span><b>' + esc(money(quote.surchargeYuan)) + ' 元</b></div>' +
@@ -532,7 +560,7 @@
       '<dt>创建时刻</dt><dd>' + esc(timeTextOf(item.createdAt)) + '</dd>' +
       '<dt>分区</dt><dd class="' + (item.zoneKnown ? '' : 'is-warn') + '">' + esc(item.zoneName) + (item.zoneKnown ? '' : '（该城市未登记分区，不能计费）') + '</dd>' +
       '<dt>入账情况</dt><dd class="' + (item.locked ? 'is-amber' : '') + '">' + (item.locked ? ('已入账：' + esc(item.billCode) + '（' + esc(item.billStatus) + '）') : '未入账') + '</dd>' +
-      '<dt>上次计费</dt><dd class="' + (cached > 0 ? 'is-amber' : '') + '">' + (cached > 0 ? (esc(money(cached)) + ' 元（' + esc(timeTextOf(item.quoteCachedAt)) + '）') : '未计费') + '</dd>' +
+      '<dt>上次计费</dt><dd class="' + (cached > 0 ? 'is-amber' : '') + '">' + (cached > 0 ? (esc(money(cached)) + ' 元（' + esc(item.quoteModeText || '旧算法') + ' · ' + esc(timeTextOf(item.quoteCachedAt)) + '）') : '未计费') + '</dd>' +
       '</dl>' +
       quoteHtml +
       '<div class="btn-stack">' +
@@ -684,6 +712,7 @@
         '<div class="card-metrics">' +
         '<div class="card-metric">首重<b>' + esc(money(zone.firstWeightKg)) + ' kg / ' + esc(money(zone.firstPriceYuan)) + ' 元</b></div>' +
         '<div class="card-metric">续重<b>' + esc(money(zone.addUnitKg)) + ' kg / ' + esc(money(zone.addPriceYuan)) + ' 元</b></div>' +
+        '<div class="card-metric">重量阶梯<b>' + esc(num((zone.weightTiers || []).length)) + ' 段</b></div>' +
         '<div class="card-metric">偏远附加<b>' + esc(money(zone.remoteFeeYuan)) + ' 元</b></div>' +
         '</div>' +
         '</article>';
@@ -1104,6 +1133,7 @@
         '</div>' +
         '<div class="card-tags">' +
         '<span class="tag' + (mismatch ? ' tag-warn' : '') + '">' + (mismatch ? '金额与明细合计不一致' : '金额与明细合计一致') + '</span>' +
+        '<span class="tag' + (bill.pricingMode === 'tiered' ? ' tag-amber' : '') + '">' + esc(bill.pricingModeText || '首重续重') + '</span>' +
         '<span class="tag">折扣 ' + esc(discountTextOf(bill.discountPermille)) + '</span>' +
         '</div>' +
         '</article>';
@@ -1126,6 +1156,7 @@
         '<td>' + esc(line.toCity) + '</td>' +
         '<td>' + esc(line.zoneName || '-') + '</td>' +
         '<td class="num">' + esc(line.billableText || kg(line.billableKg)) + '</td>' +
+        '<td class="num">' + esc(line.tierText || '—') + '</td>' +
         '<td class="num">' + esc(line.amountText || money(line.amountYuan)) + '</td>' +
         '<td>' + (line.fromCache ? '取自上次计费' : '本次计算') + '</td>' +
         '</tr>';
@@ -1133,9 +1164,9 @@
 
     var table = lines.length
       ? '<div class="table-wrap"><table><thead><tr>' +
-      '<th>运单号</th><th>收件城市</th><th>分区</th><th class="num">计费重量</th><th class="num">金额(元)</th><th>计费来源</th>' +
+      '<th>运单号</th><th>收件城市</th><th>分区</th><th class="num">计费重量</th><th class="num">落段区间</th><th class="num">金额(元)</th><th>计费来源</th>' +
       '</tr></thead><tbody>' + rows + '</tbody>' +
-      '<tfoot><tr class="tfoot-row"><td colspan="4">明细合计</td><td class="num">' + esc(bill.lineSumText || money(bill.lineSumYuan)) + '</td><td>' + esc(num(bill.waybillCount)) + ' 条</td></tr></tfoot>' +
+      '<tfoot><tr class="tfoot-row"><td colspan="5">明细合计</td><td class="num">' + esc(bill.lineSumText || money(bill.lineSumYuan)) + '</td><td>' + esc(num(bill.waybillCount)) + ' 条</td></tr></tfoot>' +
       '</table></div>'
       : emptyBlock('这张账单没有明细行', '可以作废后重新出账。');
 
@@ -1148,6 +1179,7 @@
       '<dt>账期</dt><dd>' + esc(bill.period) + '</dd>' +
       '<dt>客户</dt><dd>' + esc(bill.customerName) + '（' + esc(bill.customerCode || '-') + '）</dd>' +
       '<dt>明细条数</dt><dd>' + esc(num(bill.waybillCount)) + ' 条</dd>' +
+      '<dt>计费算法</dt><dd class="is-amber">' + esc(bill.pricingModeText || '首重续重') + '（出账时落定，金额不随后续切换或改价变化）</dd>' +
       '<dt>折扣</dt><dd>' + esc(discountTextOf(bill.discountPermille)) + '</dd>' +
       '<dt>创建时刻</dt><dd>' + esc(timeTextOf(bill.createdAt)) + '</dd>' +
       '<dt>作废时刻</dt><dd>' + esc(bill.voidedAt ? timeTextOf(bill.voidedAt) : '—') + '</dd>' +
@@ -1230,11 +1262,378 @@
     }
   }
 
+  /* ================= 定价（阶梯价 / 双算法对比 / 切换） ================= */
+  function pricingStatus() {
+    return (state.summary && state.summary.pricing) || (state.pricingData.status) || null;
+  }
+  function modeText(mode) { return MODE_LABELS[mode] || mode || '—'; }
+  function tierRangeText(tier) {
+    if (!tier) return '—';
+    var to = Number(tier.toKg) >= TIER_OPEN_AT_KG ? '以上' : ('，' + tier.toKg + ')');
+    return '[' + tier.fromKg + to;
+  }
+  function tierKindText(kind) { return kind === 'unit' ? '单价 ×kg' : '整段价'; }
+
+  function renderPricingLeft() {
+    var st = pricingStatus();
+    var compare = state.pricingData.compare;
+    if (!st) return paneBlock('算法与切换', '', loadingBlock('正在读取算法状态…'));
+    var isTiered = st.mode === 'tiered';
+    var target = isTiered ? 'first_add' : 'tiered';
+    var armed = state.confirm && state.confirm.kind === 'pricing-mode';
+    var missing = st.missingTierZones || [];
+
+    var impactRows = '';
+    if (compare && compare.totals) {
+      var t = compare.totals;
+      var diffCls = t.diffYuan > 0 ? 'is-warn' : (t.diffYuan < 0 ? 'is-amber' : '');
+      impactRows =
+        '<div class="stat-list">' +
+        '<div class="stat-row"><span class="stat-name">未出账运单</span><span class="stat-val">' + num(compare.counts.priced) + ' 条可试算' +
+        (compare.counts.unzoned ? '，' + compare.counts.unzoned + ' 条未归属' : '') + '</span></div>' +
+        '<div class="stat-row"><span class="stat-name">首重续重合计</span><span class="stat-val">' + money(t.firstAddYuan) + ' 元</span></div>' +
+        '<div class="stat-row"><span class="stat-name">阶梯价合计</span><span class="stat-val">' + money(t.tieredYuan) + ' 元</span></div>' +
+        '<div class="stat-row"><span class="stat-name">差额（阶梯-首续）</span><span class="stat-val ' + diffCls + '">' + (t.diffYuan > 0 ? '+' : '') + money(t.diffYuan) + ' 元</span></div>' +
+        '</div>';
+    }
+
+    var missingHtml = missing.length
+      ? '<div class="panel"><h4 class="panel-title">还不能切到阶梯价</h4>' +
+        '<p class="block-hint">以下 ' + missing.length + ' 个启用分区还没登记重量区间：</p>' +
+        '<div class="chips">' + missing.map(function (z) { return '<span class="chip is-amber">' + esc(z.code) + ' ' + esc(z.name) + '</span>'; }).join('') + '</div>' +
+        '<p class="block-hint">在右侧逐个配齐（首段从 0kg 起、末段不限重、首尾相接）后再来切换。</p></div>'
+      : '';
+
+    var history = st.history || [];
+    var last = history[0];
+    var historyHtml = last
+      ? '<div class="block"><h3 class="block-title">最近一次切换</h3>' +
+        '<dl class="kv-list">' +
+        '<dt>时间</dt><dd>' + esc(last.atText || '—') + '</dd>' +
+        '<dt>方向</dt><dd>' + esc(modeText(last.fromMode)) + ' → ' + esc(modeText(last.toMode)) + '</dd>' +
+        '<dt>影响未出账运单</dt><dd class="is-amber">' + num(last.affectedCount) + ' 条</dd>' +
+        '<dt>两种算法合计</dt><dd>首续 ' + money(last.totals.firstAddYuan) + ' / 阶梯 ' + money(last.totals.tieredYuan) + '（差 ' + (last.totals.diffYuan > 0 ? '+' : '') + money(last.totals.diffYuan) + '）元</dd>' +
+        '</dl>' +
+        (last.affectedCodes && last.affectedCodes.length
+          ? '<p class="block-hint">受影响运单：' + esc(last.affectedCodes.slice(0, 30).join('、')) + (last.affectedCodes.length > 30 ? ' 等' : '') + '</p>'
+          : '<p class="block-hint">切换时没有未出账运单。</p>') +
+        '</div>'
+      : '<div class="block"><h3 class="block-title">切换记录</h3><p class="block-hint">还没有切换过算法；已出账账单的金额在切换后保持不变。</p></div>';
+
+    var body =
+      '<div class="block"><h3 class="block-title">当前落定算法</h3>' +
+      '<div class="panel ' + (isTiered ? 'is-amber' : '') + '"><h4 class="panel-title">' + esc(modeText(st.mode)) + '</h4>' +
+      '<p class="block-hint">落定之后，新单条计费与新出账单都按这个算法算；已经出账的账单金额原样冻结，不会随切换或改价变化。</p></div>' +
+      '<button type="button" class="btn btn-primary btn-block" data-action="switch-pricing-mode" data-mode="' + attr(target) + '"' +
+        (target === 'tiered' && !st.tieredReady ? ' disabled' : '') + '>' +
+      (armed ? '确认切换到「' + modeText(target) + '」（再点一次）' : '整体切换到「' + modeText(target) + '」') + '</button>' +
+      '<p class="foot-note">切换是全局落定，对所有客户与分区生效；切换前可在中间清单逐单核对两种算法。</p>' +
+      missingHtml + '</div>' +
+      '<div class="block"><h3 class="block-title">切换影响测算（未出账运单）</h3>' +
+      (compare ? impactRows : loadingBlock('正在试算…')) +
+      '<label class="field" style="margin-top:8px;"><span class="field-label">只看某个客户</span>' +
+      '<select id="pricingCustomer">' + customerOptionsHtml(state.pricingFilter.customerId, '全部客户') + '</select></label>' +
+      '</div>' +
+      historyHtml;
+
+    return paneBlock('算法与切换', 'GET /api/pricing', body);
+  }
+
+  function renderPricingMid() {
+    var box = state.pricingData;
+    var compare = box.compare;
+    var st = pricingStatus();
+    var meta = st ? ('当前算法：' + modeText(st.mode)) : '';
+    if (!compare) {
+      return paneBlock('双算法逐单试算', meta, loadingBlock('正在按两种算法试算未出账运单…'));
+    }
+    var rows = compare.rows || [];
+    if (!rows.length) {
+      return paneBlock('双算法逐单试算', meta, emptyBlock('没有未出账运单', '已进账单（含已作废账单）的运单金额已冻结，不出现在试算里。'));
+    }
+    var trs = rows.map(function (row) {
+      var diffCell = '—';
+      var tierCell = '—';
+      if (row.tiered) {
+        var d = Number(row.diffYuan);
+        var dcls = d > 0 ? 'num pos' : (d < 0 ? 'num neg' : 'num');
+        diffCell = '<span class="' + dcls + '">' + (d > 0 ? '+' : '') + money(d) + '</span>';
+        var tierLabel = row.tiered.tier ? tierRangeText(row.tiered.tier) : '';
+        tierCell = '<div class="cmp-cell"><b>' + money(row.tiered.totalYuan) + '</b>' +
+          (row.tiered.missingTier
+            ? '<span class="tag tag-warn">区间未覆盖</span>'
+            : '<span class="tag">' + esc(tierLabel) + ' · ' + esc(tierKindText(row.tiered.tier && row.tiered.tier.kind)) + '</span>') + '</div>';
+      }
+      return '<tr' + (!row.zoneKnown ? ' class="row-muted"' : '') + '>' +
+        '<td>' + esc(row.code) + '</td>' +
+        '<td>' + esc(row.customerName) + '</td>' +
+        '<td>' + esc(row.toCity) + (row.zoneKnown ? '' : ' <span class="tag tag-warn">未归属</span>') + '</td>' +
+        '<td>' + esc(row.zoneName || '—') + '</td>' +
+        '<td class="num">' + (row.billableKg == null ? '—' : row.billableKg + '') + '</td>' +
+        '<td class="num"><b>' + (row.firstAdd ? money(row.firstAdd.totalYuan) : '—') + '</b></td>' +
+        '<td class="num">' + tierCell + '</td>' +
+        '<td class="num">' + diffCell + '</td>' +
+        '</tr>';
+    }).join('');
+
+    var t = compare.totals;
+    var totalDiffCls = t.diffYuan > 0 ? 'pos' : (t.diffYuan < 0 ? 'neg' : '');
+    var table =
+      '<div class="table-wrap cmp-table"><table><thead><tr>' +
+      '<th>运单号</th><th>客户</th><th>收件城市</th><th>分区</th><th class="num">计费重量kg</th>' +
+      '<th class="num">首重续重(元)</th><th class="num">阶梯价(元)</th><th class="num">差额(元)</th>' +
+      '</tr></thead><tbody>' + trs + '</tbody>' +
+      '<tfoot><tr class="tfoot-row"><td colspan="5">合计（' + num(compare.counts.priced) + ' 条可试算' +
+      (compare.counts.missingTier ? '，' + compare.counts.missingTier + ' 条区间未覆盖按 0 显示' : '') + '）</td>' +
+      '<td class="num">' + money(t.firstAddYuan) + '</td>' +
+      '<td class="num">' + money(t.tieredYuan) + '</td>' +
+      '<td class="num ' + totalDiffCls + '">' + (t.diffYuan > 0 ? '+' : '') + money(t.diffYuan) + '</td>' +
+      '</tr></tfoot></table></div>';
+
+    var hint =
+      '<p class="foot-note">差额 = 阶梯价 − 首重续重：<span class="pos">红色为阶梯价更高</span>，<span class="neg">绿色为阶梯价更低</span>。' +
+      '只统计还没进账单的运单；右侧区间配置一保存，这张表立刻按新区间重算。</p>';
+
+    return paneBlock('双算法逐单试算（未出账运单）', 'GET /api/pricing/compare', table + hint);
+  }
+
+  // 区间草稿：每行只录「上界 / 算法 / 价格」，下界由上一行上界推出（首段恒为 0）
+  function draftFromZone(zone) {
+    var tiers = (zone && zone.weightTiers) || [];
+    return tiers.map(function (tier) {
+      return {
+        toKg: Number(tier.toKg) >= TIER_OPEN_AT_KG ? '' : String(tier.toKg),
+        open: Number(tier.toKg) >= TIER_OPEN_AT_KG,
+        kind: tier.kind || 'flat',
+        priceYuan: String(tier.priceYuan),
+      };
+    });
+  }
+  function draftBounds(draft) {
+    // 返回每行的 {from,to}，末段 open 时 to 为 99999
+    return draft.map(function (row, i) {
+      return { fromKg: i === 0 ? 0 : boundOf(draft[i - 1]), toKg: row.open ? TIER_OPEN_AT_KG : boundOf(row) };
+    });
+  }
+  function boundOf(row) { return Number(row.toKg); }
+
+  function validateDraft(draft) {
+    if (!draft.length) return '至少登记一个重量区间';
+    for (var i = 0; i < draft.length; i++) {
+      if (!draft[i].open) {
+        var to = Number(draft[i].toKg);
+        if (!isFinite(to) || to <= 0) return '第 ' + (i + 1) + ' 段的上界要填大于 0 的数字（末段可勾选「以上不限重」）';
+        var from = i === 0 ? 0 : Number(draft[i - 1].open ? TIER_OPEN_AT_KG : draft[i - 1].toKg);
+        if (!(to > from)) return '第 ' + (i + 1) + ' 段上界要大于下界 ' + from + 'kg，区间不能重叠或留缺口';
+      } else if (i < draft.length - 1) {
+        return '只有最后一段才能勾「以上不限重」';
+      }
+      var price = Number(draft[i].priceYuan);
+      if (!isFinite(price) || price < 0) return '第 ' + (i + 1) + ' 段价格要填不小于 0 的数字';
+    }
+    if (!draft[draft.length - 1].open) return '最后一段要勾上「以上不限重」，保证所有重量都有区间可落';
+    return '';
+  }
+
+  function readDraftPayload(draft) {
+    return draft.map(function (row, i) {
+      var from = i === 0 ? 0 : (draft[i - 1].open ? TIER_OPEN_AT_KG : Number(draft[i - 1].toKg));
+      return {
+        fromKg: from,
+        toKg: row.open ? TIER_OPEN_AT_KG : Number(row.toKg),
+        kind: row.kind,
+        priceYuan: Number(row.priceYuan),
+      };
+    });
+  }
+
+  function zoneTiersSummary(zone) {
+    var tiers = zone.weightTiers || [];
+    if (!tiers.length) return '<span class="muted">还没登记阶梯区间</span>';
+    return tiers.map(function (tier) {
+      return '<span class="chip">' + esc(tierRangeText(tier)) + ' ' + esc(tierKindText(tier.kind)) + ' ' + esc(money(tier.priceYuan)) +
+        (tier.kind === 'unit' ? ' 元/kg' : ' 元') + '</span>';
+    }).join('');
+  }
+
+  function renderPricingRight() {
+    var zones = state.zones;
+    var selectedId = state.editingTiersZoneId;
+    if (!selectedId || !zones.some(function (z) { return z.id === selectedId; })) {
+      selectedId = zones.length ? zones[0].id : '';
+      state.editingTiersZoneId = selectedId;
+    }
+    var zone = zones.filter(function (z) { return z.id === selectedId; })[0] || null;
+    if (state.tierDraft.length === 0 || state.tierDraftZoneId !== selectedId) {
+      state.tierDraft = zone ? draftFromZone(zone) : [];
+      state.tierDraftZoneId = selectedId;
+    }
+
+    var options = zones.map(function (z) {
+      var missing = !(z.weightTiers && z.weightTiers.length);
+      return '<option value="' + attr(z.id) + '"' + (z.id === selectedId ? ' selected' : '') + '>' +
+        esc(z.code + ' ' + z.name + (z.status === '停用' ? '（停用）' : '') + (missing ? '（未配区间）' : '')) + '</option>';
+    }).join('');
+
+    var draft = state.tierDraft;
+    var bounds = draftBounds(draft);
+    var rows = draft.map(function (row, i) {
+      var b = bounds[i];
+      var toText = row.open ? '以上不限重' : (b.toKg + ' kg');
+      return '<tr>' +
+        '<td class="num">' + (i + 1) + '</td>' +
+        '<td class="num bound-cell">' + b.fromKg + ' kg <span class="bound-mark">≤</span> 重量 <span class="bound-mark">&lt;</span> ' + esc(toText) + '</td>' +
+        '<td><select data-tier-row="' + i + '" data-tier-field="kind">' +
+        '<option value="flat"' + (row.kind === 'flat' ? ' selected' : '') + '>整段价（落段收固定金额）</option>' +
+        '<option value="unit"' + (row.kind === 'unit' ? ' selected' : '') + '>单价（元 × 计费重量kg）</option>' +
+        '</select></td>' +
+        '<td><input type="number" step="0.01" min="0" class="tier-input" data-tier-row="' + i + '" data-tier-field="priceYuan" value="' + attr(row.priceYuan) + '"></td>' +
+        '<td class="nowrap"><label class="check-inline"><input type="checkbox" data-tier-row="' + i + '" data-tier-field="open"' + (row.open ? ' checked' : '') +
+        (i !== draft.length - 1 ? ' disabled' : '') + '>以上</label></td>' +
+        '<td><input type="number" step="0.1" min="0" class="tier-input tier-to" data-tier-row="' + i + '" data-tier-field="toKg" value="' + attr(row.open ? '' : row.toKg) + '"' + (row.open ? ' disabled' : '') + '></td>' +
+        '<td><button type="button" class="btn btn-ghost btn-sm" data-action="remove-tier-row" data-index="' + i + '"' +
+        (i === 0 && draft.length === 1 ? ' disabled' : '') + '>删除</button></td>' +
+        '</tr>';
+    }).join('');
+
+    var table =
+      '<div class="table-wrap tier-table"><table><thead><tr>' +
+      '<th>#</th><th>区间口径（下界含，上界不含）</th><th>算法</th><th class="num">价格(元)</th><th>末段</th><th class="num">上界kg</th><th></th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+
+    var otherZones = zones.filter(function (z) { return z.id !== selectedId; });
+
+    var body =
+      '<div class="block"><h3 class="block-title">选择要配置区间的分区</h3>' +
+      '<label class="field"><span class="field-label">分区</span>' +
+      '<select id="tierZoneSelect">' + options + '</select></label></div>' +
+      '<div class="block"><h3 class="block-title">' + esc(zone ? zone.code + ' ' + zone.name : '') + ' 的重量阶梯</h3>' +
+      '<div class="rule-note">' +
+      '<p><b>边界口径：</b>区间写成「下界 ≤ 重量 &lt; 上界」，即 <b>[下界, 上界)</b>。例如重量正好 1.0kg，归 [1.0, 3.0) 这一段，不归 [0, 1.0)。计费重量本身已向上取到 0.5kg。</p>' +
+      '<p><b>衔接要求：</b>第一段从 <b>0kg</b> 开始；相邻两段首尾相接（前段上界 = 后段下界），<b>不能重叠也不能留缺口</b>；最后一段勾「以上」覆盖所有更大重量。</p>' +
+      '<p><b>两种算法：</b>整段价＝重量落段就收该段固定金额；单价＝该段单价 × 计费重量（向上取到分）。</p>' +
+      '</div>' +
+      table +
+      '<div class="btn-row">' +
+      '<button type="button" class="btn" data-action="add-tier-row">加一段</button>' +
+      '<button type="button" class="btn btn-primary" data-action="save-tier-draft">保存区间并刷新试算</button>' +
+      '</div>' +
+      '<p class="foot-note">保存后中间的双算法试算立即按新区间重算；只改区间不落定算法，不会影响当前出账。</p>' +
+      '</div>' +
+      (otherZones.length
+        ? '<div class="block"><h3 class="block-title">其他分区区间一览</h3><div class="chips">' +
+          otherZones.map(function (z) {
+            return '<div class="tier-zone-line"><button type="button" class="chip chip-btn" data-action="pick-tier-zone" data-id="' + attr(z.id) + '">' + esc(z.code + ' ' + z.name) + '</button>' + zoneTiersSummary(z) + '</div>';
+          }).join('') + '</div></div>'
+        : '');
+
+    return paneBlock('重量阶梯配置', 'PATCH /api/zones/:id', body);
+  }
+
+  function pickTierZone(id) {
+    state.editingTiersZoneId = id;
+    state.tierDraft = [];
+    state.tierDraftZoneId = '';
+    renderRight();
+  }
+
+  function syncTierDraftFromDom() {
+    var form = els.rightPane;
+    state.tierDraft.forEach(function (row, i) {
+      ['kind', 'priceYuan', 'toKg'].forEach(function (field) {
+        var input = form.querySelector('[data-tier-row="' + i + '"][data-tier-field="' + field + '"]');
+        if (input) row[field] = input.value;
+      });
+      var open = form.querySelector('[data-tier-row="' + i + '"][data-tier-field="open"]');
+      if (open) row.open = open.checked;
+    });
+  }
+
+  function rerenderTierEditor() {
+    // 保留输入焦点：只重绘表格区
+    var zone = state.zones.filter(function (z) { return z.id === state.editingTiersZoneId; })[0];
+    // 简单整页右栏重绘即可（数字输入场景可接受）
+    renderRight();
+  }
+
+  async function addTierRow() {
+    syncTierDraftFromDom();
+    var draft = state.tierDraft;
+    if (!draft.length) {
+      state.tierDraft = [{ toKg: '', open: true, kind: 'flat', priceYuan: '8' }];
+    } else {
+      // 末段从「以上」改为有界段，需要给它补一个上界；新段接管「以上」
+      var last = draft[draft.length - 1];
+      if (last.open) { last.open = false; last.toKg = last.toKg || ''; }
+      draft.push({ toKg: '', open: true, kind: last.kind, priceYuan: last.priceYuan });
+    }
+    rerenderTierEditor();
+  }
+
+  function removeTierRow(index) {
+    syncTierDraftFromDom();
+    var draft = state.tierDraft;
+    if (draft.length <= 1) return;
+    draft.splice(index, 1);
+    draft[draft.length - 1].open = true; // 删除后新的末段接管「以上」
+    rerenderTierEditor();
+  }
+
+  async function saveTierDraft() {
+    syncTierDraftFromDom();
+    var draft = state.tierDraft;
+    var error = validateDraft(draft);
+    if (error) { fail(new Error(error)); return; }
+    var zone = state.zones.filter(function (z) { return z.id === state.editingTiersZoneId; })[0];
+    if (!zone) return;
+    var payload = { weightTiers: readDraftPayload(draft) };
+    try {
+      var saved = await api('PATCH', '/api/zones/' + encodeURIComponent(zone.id), payload);
+      state.tierDraft = draftFromZone(saved);
+      state.tierDraftZoneId = saved.id;
+      await loadZones();
+      await loadSummary();
+      renderRight();
+      await loadPricingCompare();
+      renderMid();
+      renderLeft();
+      ok('已保存分区 ' + saved.code + ' 的 ' + saved.weightTiers.length + ' 个重量区间，试算结果已按新区间重算');
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  async function switchPricingMode(targetMode) {
+    var st = pricingStatus();
+    if (!st || st.mode === targetMode) return;
+    if (state.confirm && state.confirm.kind === 'pricing-mode') {
+      try {
+        var result = await api('POST', '/api/pricing/mode', { mode: targetMode });
+        state.confirm = null;
+        state.summary.pricing = result.status;
+        renderLeft();
+        await loadPricingCompare();
+        renderMid();
+        var rec = result.switched;
+        ok('已整体切换为「' + modeText(rec.toMode) + '」：影响 ' + rec.affectedCount + ' 条未出账运单，已出账账单金额不变');
+      } catch (err) {
+        state.confirm = null;
+        renderLeft();
+        fail(err);
+      }
+      return;
+    }
+    state.confirm = { kind: 'pricing-mode', mode: targetMode };
+    renderLeft();
+    setStatus('再点一次确认整体切换；已出账账单金额不会变，影响范围见切换记录');
+  }
+
   /* ================= 渲染总入口 ================= */
   function renderLeft() {
     if (state.tab === 'overview') setLeft(renderOverviewLeft());
     else if (state.tab === 'waybills') setLeft(renderWaybillsLeft());
     else if (state.tab === 'zones') setLeft(renderZonesLeft());
+    else if (state.tab === 'pricing') setLeft(renderPricingLeft());
     else if (state.tab === 'customers') setLeft(renderCustomersLeft());
     else setLeft(renderBillsLeft());
   }
@@ -1242,6 +1641,7 @@
     if (state.tab === 'overview') setMid(renderOverviewMid());
     else if (state.tab === 'waybills') setMid(renderWaybillsMid());
     else if (state.tab === 'zones') setMid(renderZonesMid());
+    else if (state.tab === 'pricing') setMid(renderPricingMid());
     else if (state.tab === 'customers') setMid(renderCustomersMid());
     else setMid(renderBillsMid());
   }
@@ -1249,6 +1649,7 @@
     if (state.tab === 'overview') setRight(renderOverviewRight());
     else if (state.tab === 'waybills') setRight(renderWaybillsRight());
     else if (state.tab === 'zones') setRight(renderZonesRight());
+    else if (state.tab === 'pricing') setRight(renderPricingRight());
     else if (state.tab === 'customers') setRight(renderCustomersRight());
     else setRight(renderBillsRight());
   }
@@ -1264,6 +1665,13 @@
       await refreshAll();
       render();
       if (key === 'bills' && state.selectedBillId) await loadBillDetail(state.selectedBillId);
+      if (key === 'pricing') {
+        state.editingTiersZoneId = state.zones.length ? state.zones[0].id : '';
+        state.tierDraft = [];
+        state.tierDraftZoneId = '';
+        renderRight();
+        try { await loadPricingCompare(); renderMid(); renderLeft(); } catch (err) { fail(err); }
+      }
       ok('已切换到「' + TAB_LABELS[key] + '」');
     } catch (err) {
       fail(err);
@@ -1318,6 +1726,11 @@
     if (el.id === 'zoneStatus') { state.zoneFilter.status = el.value; renderMid(); renderLeft(); return; }
     if (el.id === 'customerSettle') { state.customerFilter.settle = el.value; renderMid(); renderLeft(); return; }
     if (el.id === 'customerStatus') { state.customerFilter.status = el.value; renderMid(); renderLeft(); return; }
+    if (el.id === 'pricingCustomer') {
+      state.pricingFilter.customerId = el.value;
+      loadPricingCompare().then(function () { renderMid(); renderLeft(); setStatus('已按客户刷新试算结果'); }).catch(fail);
+      return;
+    }
   }
 
   function onLeftKeydown(event) {
@@ -1329,6 +1742,32 @@
 
   function onRightInput(event) {
     var el = event.target;
+    if (el.id === 'tierZoneSelect') {
+      pickTierZone(el.value);
+      return;
+    }
+    // 区间行内的勾选/输入：先把 DOM 值同步进草稿；勾「以上」要联动上界输入框
+    var tierRow = el.getAttribute ? el.getAttribute('data-tier-row') : null;
+    if (tierRow !== null) {
+      var index = Number(tierRow);
+      var field = el.getAttribute('data-tier-field');
+      var row = state.tierDraft[index];
+      if (!row) return;
+      if (field === 'open') {
+        syncTierDraftFromDom();
+        if (el.checked && index < state.tierDraft.length - 1) {
+          // 非末段不允许勾（已在 DOM 禁用），双保险
+          el.checked = false;
+          return;
+        }
+        renderRight();
+        return;
+      }
+      if (field === 'kind' || field === 'priceYuan' || field === 'toKg') {
+        row[field] = el.value;
+      }
+      return;
+    }
     var wrap = el.closest ? el.closest('[data-field-wrap]') : null;
     if (wrap && wrap.classList.contains('is-error')) {
       wrap.classList.remove('is-error');
@@ -1344,8 +1783,9 @@
   async function handleAction(action, target) {
     var id = target.getAttribute('data-id') || '';
     // 除了正在等待二次确认的删除，其它操作都会取消确认状态
-    if (action !== 'delete-waybill' && action !== 'delete-zone' && action !== 'delete-customer' && action !== 'void-bill') {
-      if (state.confirm) { state.confirm = null; renderRight(); }
+    if (action !== 'delete-waybill' && action !== 'delete-zone' && action !== 'delete-customer' &&
+        action !== 'void-bill' && action !== 'switch-pricing-mode') {
+      if (state.confirm) { state.confirm = null; renderRight(); renderLeft(); }
     }
 
     switch (action) {
@@ -1460,6 +1900,14 @@
       case 'refresh-zones':
         try { await loadZones(); await loadSummary(); render(); ok('分区清单已刷新，共 ' + state.zones.length + ' 个'); } catch (err) { fail(err); }
         break;
+
+      case 'switch-pricing-mode':
+        await switchPricingMode(target.getAttribute('data-mode') || '');
+        break;
+      case 'add-tier-row': await addTierRow(); break;
+      case 'remove-tier-row': removeTierRow(Number(target.getAttribute('data-index'))); break;
+      case 'save-tier-draft': await saveTierDraft(); break;
+      case 'pick-tier-zone': pickTierZone(target.getAttribute('data-id')); break;
 
       case 'new-customer':
         state.customerMode = 'create';

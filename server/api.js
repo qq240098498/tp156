@@ -6,6 +6,7 @@ const customers = require('./customers');
 const waybills = require('./waybills');
 const bills = require('./bills');
 const pricing = require('./pricing');
+const pricingMode = require('./pricingMode');
 
 function buildSummary() {
   const data = store.load();
@@ -34,6 +35,7 @@ function buildSummary() {
     })),
     periods: Array.from(new Set(data.waybills.map((waybill) => bills.periodOf(waybill)).filter(Boolean))).sort(),
     settings,
+    pricing: pricingMode.pricingStatus(data),
     updatedAt: data.meta.updatedAt,
   };
 }
@@ -73,6 +75,11 @@ function createRouter() {
   router.post('/zones', (req, res) => res.status(201).json(zones.createZone(req.body || {})));
   router.patch('/zones/:id', (req, res) => res.json(zones.updateZone(req.params.id, req.body || {})));
   router.delete('/zones/:id', (req, res) => res.json(zones.removeZone(req.params.id)));
+
+  // 算法状态 / 双算法试算 / 整体切换
+  router.get('/pricing', (req, res) => res.json({ status: pricingMode.pricingStatus(store.load()) }));
+  router.get('/pricing/compare', (req, res) => res.json(pricingMode.compareAll(req.query || {})));
+  router.post('/pricing/mode', (req, res) => res.json(pricingMode.switchMode((req.body || {}).mode)));
 
   router.get('/customers', (req, res) => res.json(customers.listCustomers()));
   router.post('/customers', (req, res) => res.status(201).json(customers.createCustomer(req.body || {})));
