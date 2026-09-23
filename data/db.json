@@ -2,7 +2,7 @@
   "meta": {
     "name": "运单计费与账单核对台",
     "currency": "CNY",
-    "updatedAt": "2026-09-22T12:48:30.802Z"
+    "updatedAt": "2026-09-23T08:34:42.056Z"
   },
   "settings": {
     "volumetricDivisor": 6000,
@@ -10,7 +10,9 @@
     "oversizeWeightKg": 30,
     "oversizePieces": 3,
     "oversizeFeeYuan": 20,
-    "insurancePermille": 20
+    "insurancePermille": 20,
+    "pricingAlgorithm": "tiered",
+    "pricingSwitchedAt": "2026-09-23T08:34:42.056Z"
   },
   "zones": [
     {
@@ -30,7 +32,27 @@
       "addUnitKg": 0.5,
       "addPriceYuan": 1.5,
       "remoteFeeYuan": 0,
-      "status": "启用"
+      "status": "启用",
+      "tiers": [
+        {
+          "lowerKg": 0,
+          "upperKg": 1,
+          "priceType": "flat",
+          "priceYuan": 8
+        },
+        {
+          "lowerKg": 1,
+          "upperKg": 5,
+          "priceType": "unit",
+          "priceYuan": 2.4
+        },
+        {
+          "lowerKg": 5,
+          "upperKg": null,
+          "priceType": "flat",
+          "priceYuan": 22
+        }
+      ]
     },
     {
       "id": "zone-0002",
@@ -49,7 +71,27 @@
       "addUnitKg": 0.5,
       "addPriceYuan": 2,
       "remoteFeeYuan": 0,
-      "status": "启用"
+      "status": "启用",
+      "tiers": [
+        {
+          "lowerKg": 0,
+          "upperKg": 1,
+          "priceType": "flat",
+          "priceYuan": 10
+        },
+        {
+          "lowerKg": 1,
+          "upperKg": 5,
+          "priceType": "unit",
+          "priceYuan": 3
+        },
+        {
+          "lowerKg": 5,
+          "upperKg": null,
+          "priceType": "flat",
+          "priceYuan": 28
+        }
+      ]
     },
     {
       "id": "zone-0003",
@@ -66,7 +108,27 @@
       "addUnitKg": 0.5,
       "addPriceYuan": 3,
       "remoteFeeYuan": 2,
-      "status": "启用"
+      "status": "启用",
+      "tiers": [
+        {
+          "lowerKg": 0,
+          "upperKg": 1,
+          "priceType": "flat",
+          "priceYuan": 12
+        },
+        {
+          "lowerKg": 1,
+          "upperKg": 5,
+          "priceType": "unit",
+          "priceYuan": 4.5
+        },
+        {
+          "lowerKg": 5,
+          "upperKg": null,
+          "priceType": "flat",
+          "priceYuan": 45
+        }
+      ]
     },
     {
       "id": "zone-0004",
@@ -82,7 +144,27 @@
       "addUnitKg": 0.5,
       "addPriceYuan": 4,
       "remoteFeeYuan": 5,
-      "status": "启用"
+      "status": "启用",
+      "tiers": [
+        {
+          "lowerKg": 0,
+          "upperKg": 1,
+          "priceType": "flat",
+          "priceYuan": 15
+        },
+        {
+          "lowerKg": 1,
+          "upperKg": 5,
+          "priceType": "unit",
+          "priceYuan": 6
+        },
+        {
+          "lowerKg": 5,
+          "upperKg": null,
+          "priceType": "flat",
+          "priceYuan": 60
+        }
+      ]
     }
   ],
   "customers": [
@@ -421,7 +503,8 @@
       "status": "已签收",
       "createdAt": "2026-09-02T09:30:00+08:00",
       "billId": null,
-      "quoteCacheYuan": null
+      "quoteCacheYuan": null,
+      "quoteCachedAt": null
     },
     {
       "id": "wb-0019",
@@ -437,7 +520,8 @@
       "status": "在途",
       "createdAt": "2026-09-05T14:15:00+08:00",
       "billId": null,
-      "quoteCacheYuan": null
+      "quoteCacheYuan": null,
+      "quoteCachedAt": null
     },
     {
       "id": "wb-0020",
@@ -453,7 +537,8 @@
       "status": "待发",
       "createdAt": "2026-09-08T08:40:00+08:00",
       "billId": null,
-      "quoteCacheYuan": null
+      "quoteCacheYuan": null,
+      "quoteCachedAt": null
     },
     {
       "id": "wb-0021",
@@ -472,7 +557,8 @@
       "status": "已签收",
       "createdAt": "2026-09-03T11:50:00+08:00",
       "billId": null,
-      "quoteCacheYuan": null
+      "quoteCacheYuan": null,
+      "quoteCachedAt": null
     },
     {
       "id": "wb-0022",
@@ -488,7 +574,8 @@
       "status": "待发",
       "createdAt": "2026-09-10T09:05:00+08:00",
       "billId": null,
-      "quoteCacheYuan": null
+      "quoteCacheYuan": null,
+      "quoteCachedAt": null
     }
   ],
   "bills": [

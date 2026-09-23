@@ -593,3 +593,37 @@ tbody tr:hover td { background: var(--slate-soft); }
   .tabs { height: 42px; }
   .topbar-side { width: 100%; }
 }
+
+/* ---------------- 定价：阶梯区间与双算法试算 ---------------- */
+.rule-list { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-2); line-height: 1.75; }
+.rule-list li { margin-bottom: 4px; }
+.rule-list b { color: var(--amber-dark); }
+
+.tier-table { table-layout: fixed; }
+.tier-table th, .tier-table td { padding: 5px 6px; }
+.tier-table .tier-input {
+  width: 100%;
+  padding: 5px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  background: #fff;
+  color: var(--ink);
+}
+.tier-table .tier-input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-soft); }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+.trial-table th, .trial-table td { font-size: 12px; }
+.trial-table td:first-child { font-weight: 600; color: var(--ink); }
+.row-locked td { background: var(--slate-soft); }
+.row-locked:hover td { background: #eef2f8; }
+.tag-lock { border-color: var(--brand-line); background: var(--brand-soft); color: var(--brand-dark); }
+.muted { color: var(--faint); font-size: 11.5px; }
+.warn-text { color: var(--danger); }
+.diff-up { color: var(--danger); }
+.diff-down { color: #1d7d46; }
+.diff-up b, .diff-down b { font-variant-numeric: tabular-nums; }
+
+.chip.chip-warn, .chip-btn.chip-warn { border-color: var(--danger-line); background: var(--danger-soft); color: var(--danger); }

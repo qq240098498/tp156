@@ -6,6 +6,7 @@ const customers = require('./customers');
 const waybills = require('./waybills');
 const bills = require('./bills');
 const pricing = require('./pricing');
+const trial = require('./trial');
 
 function buildSummary() {
   const data = store.load();
@@ -59,6 +60,10 @@ function createRouter() {
     const payload = req.body || {};
     Object.keys(payload).forEach((key) => {
       if (!(key in store.DEFAULT_SETTINGS)) return;
+      // 生效算法只能通过 /pricing/switch 整体切换，切换时间由系统记录，不在这里改
+      if (key === 'pricingAlgorithm' || key === 'pricingSwitchedAt') {
+        throw new AppError(400, 'SETTINGS_KEY_LOCKED', '生效算法要通过「定价」页面整体切换，不能在这里直接改', { field: key });
+      }
       const value = Number(payload[key]);
       if (!Number.isFinite(value) || value < 0) {
         throw new AppError(400, 'SETTINGS_VALUE_INVALID', '设置项 ' + key + ' 必须是不小于 0 的数字', { field: key });
@@ -68,6 +73,10 @@ function createRouter() {
     store.save(data);
     res.json({ settings: pricing.settingsOf(store.load()) });
   });
+
+  // 双算法试算与整体切换（阶梯价 ↔ 首重续重）
+  router.get('/pricing/trial', (req, res) => res.json(trial.trialPricing(req.query || {})));
+  router.post('/pricing/switch', (req, res) => res.json(trial.switchAlgorithm(req.body || {})));
 
   router.get('/zones', (req, res) => res.json(zones.listZones()));
   router.post('/zones', (req, res) => res.status(201).json(zones.createZone(req.body || {})));

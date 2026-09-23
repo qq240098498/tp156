@@ -25,37 +25,64 @@ function candidateWaybills(data, period, customerId) {
   return data.waybills.filter((waybill) => waybill.customerId === customerId && periodOf(waybill) === period);
 }
 
-// 出账计费：同一账期同一客户的运单合起来算一次首重续重，再按各自的计费重量分摊
+// 出账计费：
+// - 首重续重：同一账期同一客户的运单合起来算一次运费（总重量套首重续重），再按计费重量分摊
+// - 阶梯价：每条运单按各自计费重量落各自的区间，运费逐单相加（整段价按单收，不做总量分摊）
+// 两种算法都在出账时把金额落到账单行上，之后切换算法不影响已出账金额
 function priceBill(data, customer, waybills) {
   const settings = pricing.settingsOf(data);
   const permille = pricing.discountPermilleOf(customer);
-  if (waybills.length === 0) return { lines: [], amountYuan: 0, permille };
+  const algorithm = pricing.effectiveAlgorithm(data);
+  if (waybills.length === 0) return { lines: [], amountYuan: 0, permille, algorithm };
   const zone = zoneOf(data, waybills[0].toCity);
   const weights = waybills.map((waybill) => pricing.billableWeightKg(waybill, settings));
-  const totalWeight = weights.reduce((sum, value) => sum + value, 0);
-  const freightAll = pricing.freightYuan(zone, totalWeight, settings);
-  const surchargeAll = waybills.reduce((sum, waybill, index) => (
-    sum + pricing.surchargeYuan(zone, waybill, weights[index], settings)
-  ), 0);
-  const grossAll = freightAll + surchargeAll;
-  const amountYuan = grossAll * permille / 1000;
-  const lines = waybills.map((waybill, index) => {
-    const weight = weights[index];
-    const share = totalWeight > 0 ? weight / totalWeight : 0;
-    const raw = (freightAll * share + pricing.surchargeYuan(zone, waybill, weight, settings)) * permille / 1000;
-    const cached = Number(waybill.quoteCacheYuan);
-    const amount = cached > 0 ? cached : pricing.roundFen(raw);
-    return {
-      waybillId: waybill.id,
-      code: waybill.code,
-      toCity: waybill.toCity,
-      zoneName: zone ? zone.name : '',
-      billableKg: weight,
-      amountYuan: amount,
-      fromCache: cached > 0,
-    };
-  });
-  return { lines, amountYuan, permille };
+  const surchargeAt = (index) => pricing.surchargeYuan(zone, waybills[index], weights[index], settings);
+  let amountYuan = 0;
+
+  let lines;
+  if (algorithm === 'tiered') {
+    lines = waybills.map((waybill, index) => {
+      const weight = weights[index];
+      const freight = pricing.tieredFreightYuan(zone, weight, settings);
+      const freightVal = freight === null ? (Number(settings.minChargeYuan) || 0) : freight;
+      const cached = Number(waybill.quoteCacheYuan);
+      const raw = (freightVal + surchargeAt(index)) * permille / 1000;
+      const amount = cached > 0 ? cached : pricing.roundFen(raw);
+      amountYuan += amount;
+      return {
+        waybillId: waybill.id,
+        code: waybill.code,
+        toCity: waybill.toCity,
+        zoneName: zone ? zone.name : '',
+        billableKg: weight,
+        amountYuan: amount,
+        fromCache: cached > 0,
+      };
+    });
+    amountYuan = pricing.roundFen(amountYuan);
+  } else {
+    const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+    const freightAll = pricing.freightYuan(zone, totalWeight, settings);
+    const surchargeAll = waybills.reduce((sum, waybill, index) => sum + surchargeAt(index), 0);
+    amountYuan = (freightAll + surchargeAll) * permille / 1000;
+    lines = waybills.map((waybill, index) => {
+      const weight = weights[index];
+      const share = totalWeight > 0 ? weight / totalWeight : 0;
+      const raw = (freightAll * share + surchargeAt(index)) * permille / 1000;
+      const cached = Number(waybill.quoteCacheYuan);
+      const amount = cached > 0 ? cached : pricing.roundFen(raw);
+      return {
+        waybillId: waybill.id,
+        code: waybill.code,
+        toCity: waybill.toCity,
+        zoneName: zone ? zone.name : '',
+        billableKg: weight,
+        amountYuan: amount,
+        fromCache: cached > 0,
+      };
+    });
+  }
+  return { lines, amountYuan, permille, algorithm };
 }
 
 function summarizeBill(bill, data) {
@@ -136,6 +163,7 @@ function generateBill(payload) {
     lines: priced.lines,
     amountYuan: priced.amountYuan,
     discountPermille: priced.permille,
+    pricingAlgorithm: priced.algorithm,
   };
   data.bills.push(bill);
   targets.forEach((waybill) => {

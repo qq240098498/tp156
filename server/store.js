@@ -12,6 +12,8 @@ const DEFAULT_SETTINGS = {
   oversizePieces: 3,
   oversizeFeeYuan: 20,
   insurancePermille: 20,
+  pricingAlgorithm: 'legacy',
+  pricingSwitchedAt: null,
 };
 
 function clone(value) {
@@ -43,6 +45,7 @@ function normalize(raw) {
   out.zones.forEach((zone) => {
     if (!Array.isArray(zone.cities)) zone.cities = [];
     if (!zone.aliases || typeof zone.aliases !== 'object') zone.aliases = {};
+    if (!Array.isArray(zone.tiers)) zone.tiers = [];
   });
   out.waybills.forEach((waybill) => {
     if (!Array.isArray(waybill.services)) waybill.services = [];

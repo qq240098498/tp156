@@ -1,5 +1,6 @@
 const { badRequest, notFound } = require('./errors');
 const { load, save, nextId } = require('./store');
+const pricing = require('./pricing');
 
 function cleanCity(value) {
   return String(value == null ? '' : value).trim();
@@ -19,6 +20,8 @@ function listZones() {
       addUnitKg: Number(zone.addUnitKg),
       addPriceYuan: Number(zone.addPriceYuan),
       remoteFeeYuan: Number(zone.remoteFeeYuan || 0),
+      tiers: pricing.normalizeTiers(zone.tiers),
+      tiersReady: pricing.tiersReady(zone),
       status: zone.status,
       citiesText: zone.cities.join('、'),
       aliasesText: Object.keys(zone.aliases || {}).join('、'),
@@ -80,7 +83,14 @@ function validateZonePayload(payload, current) {
     if (!target) throw badRequest('ZONE_ALIAS_TARGET_REQUIRED', '别名要写明对应哪个城市：' + alias, { field: 'aliases' });
     aliases[alias] = target;
   });
-  return { code, name, status, firstWeightKg, firstPriceYuan, addUnitKg, addPriceYuan, remoteFeeYuan, cities, aliases };
+  // 阶梯区间：允许先留空（继续用首重续重）；一旦登记就要完整校验，不能重叠/留缺口
+  let tiers = [];
+  if (Array.isArray(next.tiers)) {
+    tiers = next.tiers.length > 0 ? pricing.validateTiers(next.tiers) : [];
+  } else if (Array.isArray(current && current.tiers)) {
+    tiers = current.tiers.slice();
+  }
+  return { code, name, status, firstWeightKg, firstPriceYuan, addUnitKg, addPriceYuan, remoteFeeYuan, cities, aliases, tiers };
 }
 
 function createZone(payload) {
